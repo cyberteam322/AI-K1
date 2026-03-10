@@ -1,8 +1,7 @@
 fastapi
 uvicorn
-google-generativeai
-motor
-dnspython
+google-genai
 Pillow
 python-multipart
-python-dotenv
+motor
+dnspython
