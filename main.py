@@ -8,6 +8,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
+@app.get("/")
+def home():
+    return {"status": "AI K1 Online", "message": "Neural Link Active. Ready for Voice Command."}
 
 # Agar bisa diakses dari file HTML lokal/hosting lain
 app.add_middleware(
