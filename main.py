@@ -128,25 +128,31 @@ async def index():
 async def chat_endpoint(user_id: str = Form(...), message: str = Form(...), file: UploadFile = File(None)):
     try:
         contents = []
-        
         if file:
             img_bytes = await file.read()
-            # Gunakan PIL untuk membaca gambar agar kompatibel dengan SDK baru
             img = PIL.Image.open(io.BytesIO(img_bytes))
             contents.append(img)
-            
         contents.append(message)
 
-        # Memanggil model dengan cara SDK google-genai yang benar
-        response = client_ai.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=contents,
-            config={
-                "system_instruction": "Kamu AI K1, asisten ahli koding FiveM, web dev, dan fitness. Jawab dengan cerdas dan to the point."
-            }
-        )
+        # DAFTAR MODEL YANG AKAN DICOBA (URUTAN DARI YANG TERBAIK)
+        target_models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-pro"]
         
-        return {"reply": response.text}
+        last_error = ""
+        for model_name in target_models:
+            try:
+                response = client_ai.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config={
+                        "system_instruction": "Kamu AI K1, asisten ahli koding dan fitness. Jawab singkat."
+                    }
+                )
+                return {"reply": response.text}
+            except Exception as e:
+                last_error = str(e)
+                continue # Coba model berikutnya jika model ini 404
+        
+        return {"reply": f"Semua model gagal. Error terakhir: {last_error}"}
+        
     except Exception as e:
-        # Menampilkan error di layar chat jika terjadi kegagalan API
-        return {"reply": f"Maaf, AI K1 sedang kendala teknis: {str(e)}"}
+        return {"reply": f"Kesalahan sistem: {str(e)}"}
