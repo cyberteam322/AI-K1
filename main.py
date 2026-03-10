@@ -9,28 +9,31 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 app = FastAPI()
 
-# Middleware agar lancar jaya
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# Middleware agar lancar dan tidak diblokir browser
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# --- CONFIG API & DATABASE ---
+# --- KONFIGURASI ---
+# Pastikan di Railway Variables sudah ada: GEMINI_API_KEY dan MONGO_URI
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-# Pastikan MONGO_URI sudah benar di Variables Railway
 client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
 db = client.ai_k1_db
 
+# Perbaikan nama model untuk menghindari Error 404
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",
-    system_instruction="Kamu AI K1, asisten ahli koding FiveM, web dev, dan fitness. Berikan jawaban cerdas, singkat, dan gunakan format Markdown untuk kode."
+    model_name="gemini-1.5-flash"
 )
 
-# --- FIXED DATABASE LOGIC ---
+# --- FUNGSI DATABASE (ASYNC) ---
 async def get_history(user_id: str):
     try:
-        # Menghindari error sinkronisasi di Python 3.13
         doc = await db.history.find_one({"user_id": user_id})
         return doc["messages"] if doc and "messages" in doc else []
-    except Exception as e:
-        print(f"DB Read Error: {e}")
+    except:
         return []
 
 async def save_history(user_id: str, messages: list):
@@ -40,10 +43,10 @@ async def save_history(user_id: str, messages: list):
             {"$set": {"messages": messages}},
             upsert=True
         )
-    except Exception as e:
-        print(f"DB Save Error: {e}")
+    except:
+        pass
 
-# --- UI FRONTEND (ChatGPT Style) ---
+# --- UI FRONTEND (CHAT GPT STYLE) ---
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return """
@@ -54,23 +57,19 @@ async def index():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>AI K1 Workspace</title>
         <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
         <style>
             :root { --bg: #0d0d0d; --input: #212121; --accent: #10a37f; }
-            body { background: var(--bg); color: #ececf1; font-family: sans-serif; margin: 0; display: flex; height: 100vh; flex-direction: column; }
-            #chat-box { flex: 1; overflow-y: auto; padding: 20px 15%; display: flex; flex-direction: column; gap: 20px; }
-            .row { display: flex; flex-direction: column; }
-            .user { align-items: flex-end; }
-            .ai { align-items: flex-start; }
-            .bubble { max-width: 80%; padding: 12px 18px; border-radius: 15px; line-height: 1.6; }
-            .user-bubble { background: var(--input); }
-            pre { background: #000; padding: 15px; border-radius: 8px; overflow-x: auto; width: 100%; box-sizing: border-box; }
-            .input-area { padding: 20px 15%; background: var(--bg); }
-            .box { background: var(--input); border-radius: 12px; display: flex; padding: 10px; align-items: flex-end; border: 1px solid #444; }
+            body { background: var(--bg); color: #ececf1; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
+            #chat-box { flex: 1; overflow-y: auto; padding: 20px 15%; display: flex; flex-direction: column; gap: 15px; }
+            .msg { max-width: 85%; padding: 12px; border-radius: 12px; line-height: 1.5; }
+            .u { align-self: flex-end; background: var(--input); color: #fff; }
+            .a { align-self: flex-start; background: transparent; border-left: 2px solid var(--accent); }
+            pre { background: #000; padding: 10px; border-radius: 5px; overflow-x: auto; }
+            .input-area { padding: 20px 15%; background: var(--bg); border-top: 1px solid #333; }
+            .box { background: var(--input); border-radius: 15px; display: flex; padding: 10px; align-items: center; }
             textarea { flex: 1; background: transparent; border: none; color: white; padding: 10px; outline: none; resize: none; font-size: 1rem; }
-            button { background: var(--accent); color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; }
-            #preview { max-width: 150px; display: none; margin-bottom: 10px; border-radius: 8px; border: 1px solid var(--accent); }
+            button { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-weight: bold; }
+            #preview { max-width: 100px; display: none; margin-bottom: 10px; border-radius: 5px; }
         </style>
     </head>
     <body>
@@ -78,56 +77,49 @@ async def index():
         <div class="input-area">
             <img id="preview">
             <div class="box">
-                <label style="cursor:pointer; padding: 10px;">
-                    <input type="file" id="fIn" hidden accept="image/*"> 📎
-                </label>
-                <textarea id="uIn" placeholder="Kirim pesan atau gambar..." rows="1"></textarea>
-                <button id="sBtn">➤</button>
+                <input type="file" id="fIn" hidden accept="image/*">
+                <button onclick="document.getElementById('fIn').click()" style="background:#444; margin-right:5px;">📎</button>
+                <textarea id="uIn" placeholder="Tanyakan sesuatu..." rows="1"></textarea>
+                <button id="sBtn">Kirim</button>
             </div>
         </div>
         <script>
-            const chat = document.getElementById('chat-box');
+            const chatBox = document.getElementById('chat-box');
             const uIn = document.getElementById('uIn');
             const fIn = document.getElementById('fIn');
-            const prev = document.getElementById('preview');
+            const preview = document.getElementById('preview');
 
             fIn.onchange = () => {
                 const [file] = fIn.files;
-                if(file) { prev.src = URL.createObjectURL(file); prev.style.display = 'block'; }
+                if(file) { preview.src = URL.createObjectURL(file); preview.style.display = 'block'; }
             };
 
-            function add(text, role) {
-                const row = document.createElement('div');
-                row.className = `row ${role}`;
-                const b = document.createElement('div');
-                b.className = `bubble ${role}-bubble`;
-                if(role === 'ai') {
-                    b.innerHTML = marked.parse(text);
-                    b.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
-                } else { b.innerText = text; }
-                row.appendChild(b);
-                chat.appendChild(row);
-                chat.scrollTop = chat.scrollHeight;
+            function addMsg(txt, role) {
+                const d = document.createElement('div');
+                d.className = `msg ${role}`;
+                d.innerHTML = role === 'a' ? marked.parse(txt) : txt;
+                chatBox.appendChild(d);
+                chatBox.scrollTop = chatBox.scrollHeight;
             }
 
             async function send() {
-                const txt = uIn.value;
+                const text = uIn.value;
                 const file = fIn.files[0];
-                if(!txt && !file) return;
+                if(!text && !file) return;
 
-                add(txt || "Mengirim gambar...", 'user');
-                uIn.value = ''; uIn.style.height = 'auto'; prev.style.display = 'none';
+                addMsg(text || "[Gambar Terkirim]", 'u');
+                uIn.value = ''; preview.style.display = 'none';
 
                 const fd = new FormData();
                 fd.append('user_id', 'user_k1');
-                fd.append('message', txt || "Apa isi gambar ini?");
+                fd.append('message', text || "Apa isi gambar ini?");
                 if(file) fd.append('file', file);
 
                 try {
                     const res = await fetch('/chat', { method: 'POST', body: fd });
                     const data = await res.json();
-                    add(data.reply, 'ai');
-                } catch(e) { add("Error: Gagal terhubung.", 'ai'); }
+                    addMsg(data.reply, 'a');
+                } catch(e) { addMsg("Error: Gagal terhubung ke server.", 'a'); }
                 fIn.value = '';
             }
 
@@ -138,25 +130,25 @@ async def index():
     </html>
     """
 
-# --- FIXED API ENDPOINT ---
+# --- API ENDPOINT ---
 @app.post("/chat")
 async def chat_endpoint(user_id: str = Form(...), message: str = Form(...), file: UploadFile = File(None)):
     try:
-        # Ambil history secara asinkron
+        # Load history dari MongoDB
         history = await get_history(user_id)
-        chat_session = model.start_chat(history=history[-10:]) # Batasi 10 pesan terakhir
+        chat_session = model.start_chat(history=history[-10:]) # Pakai 10 chat terakhir
 
         if file:
-            content = await file.read()
-            img = PIL.Image.open(io.BytesIO(content))
+            img_data = await file.read()
+            img = PIL.Image.open(io.BytesIO(img_data))
             response = chat_session.send_message([message, img])
         else:
             response = chat_session.send_message(message)
         
-        # Simpan history baru
+        # Simpan ke database
         await save_history(user_id, chat_session.history)
         
         return {"reply": response.text}
     except Exception as e:
-        print(f"Chat Error: {e}")
-        return {"reply": f"Maaf, AI K1 sedang kendala teknis. Error: {str(e)}"}
+        # Menampilkan pesan error detail agar kita tahu jika API Key bermasalah
+        return {"reply": f"Maaf, ada kendala teknis: {str(e)}"}
