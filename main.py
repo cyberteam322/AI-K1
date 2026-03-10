@@ -4,12 +4,11 @@ import PIL.Image
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-import google.generativeai as genai
+from google import genai  # <--- INI SUDAH DIGANTI (FIXED)
 from motor.motor_asyncio import AsyncIOMotorClient
 
 app = FastAPI()
 
-# Middleware agar lancar dan tidak diblokir browser
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,18 +16,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- KONFIGURASI ---
-# Pastikan di Railway Variables sudah ada: GEMINI_API_KEY dan MONGO_URI
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-client = AsyncIOMotorClient(os.getenv("MONGO_URI"))
-db = client.ai_k1_db
+# --- KONFIGURASI SDK BARU ---
+client_ai = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client_db = AsyncIOMotorClient(os.getenv("MONGO_URI"))
+db = client_db.ai_k1_db
 
-# Perbaikan nama model untuk menghindari Error 404
-model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash"
-)
-
-# --- FUNGSI DATABASE (ASYNC) ---
+# --- DATABASE LOGIC ---
 async def get_history(user_id: str):
     try:
         doc = await db.history.find_one({"user_id": user_id})
@@ -46,7 +39,7 @@ async def save_history(user_id: str, messages: list):
     except:
         pass
 
-# --- UI FRONTEND (CHAT GPT STYLE) ---
+# --- UI FRONTEND ---
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return """
@@ -60,15 +53,15 @@ async def index():
         <style>
             :root { --bg: #0d0d0d; --input: #212121; --accent: #10a37f; }
             body { background: var(--bg); color: #ececf1; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; height: 100vh; }
-            #chat-box { flex: 1; overflow-y: auto; padding: 20px 15%; display: flex; flex-direction: column; gap: 15px; }
+            #chat-box { flex: 1; overflow-y: auto; padding: 20px 10%; display: flex; flex-direction: column; gap: 15px; }
             .msg { max-width: 85%; padding: 12px; border-radius: 12px; line-height: 1.5; }
-            .u { align-self: flex-end; background: var(--input); color: #fff; }
-            .a { align-self: flex-start; background: transparent; border-left: 2px solid var(--accent); }
+            .u { align-self: flex-end; background: var(--input); }
+            .a { align-self: flex-start; border-left: 2px solid var(--accent); padding-left: 15px; }
             pre { background: #000; padding: 10px; border-radius: 5px; overflow-x: auto; }
-            .input-area { padding: 20px 15%; background: var(--bg); border-top: 1px solid #333; }
-            .box { background: var(--input); border-radius: 15px; display: flex; padding: 10px; align-items: center; }
+            .input-area { padding: 20px 10%; background: var(--bg); border-top: 1px solid #333; }
+            .box { background: var(--input); border-radius: 15px; display: flex; padding: 10px; align-items: center; border: 1px solid #444; }
             textarea { flex: 1; background: transparent; border: none; color: white; padding: 10px; outline: none; resize: none; font-size: 1rem; }
-            button { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; font-weight: bold; }
+            button { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 10px; cursor: pointer; }
             #preview { max-width: 100px; display: none; margin-bottom: 10px; border-radius: 5px; }
         </style>
     </head>
@@ -79,7 +72,7 @@ async def index():
             <div class="box">
                 <input type="file" id="fIn" hidden accept="image/*">
                 <button onclick="document.getElementById('fIn').click()" style="background:#444; margin-right:5px;">📎</button>
-                <textarea id="uIn" placeholder="Tanyakan sesuatu..." rows="1"></textarea>
+                <textarea id="uIn" placeholder="Halo K1, bantu saya koding..." rows="1"></textarea>
                 <button id="sBtn">Kirim</button>
             </div>
         </div>
@@ -107,7 +100,7 @@ async def index():
                 const file = fIn.files[0];
                 if(!text && !file) return;
 
-                addMsg(text || "[Gambar Terkirim]", 'u');
+                addMsg(text || "[Gambar]", 'u');
                 uIn.value = ''; preview.style.display = 'none';
 
                 const fd = new FormData();
@@ -119,7 +112,7 @@ async def index():
                     const res = await fetch('/chat', { method: 'POST', body: fd });
                     const data = await res.json();
                     addMsg(data.reply, 'a');
-                } catch(e) { addMsg("Error: Gagal terhubung ke server.", 'a'); }
+                } catch(e) { addMsg("Error: Server tidak merespon.", 'a'); }
                 fIn.value = '';
             }
 
@@ -130,25 +123,30 @@ async def index():
     </html>
     """
 
-# --- API ENDPOINT ---
+# --- API ENDPOINT (SDK BARU - FIXED) ---
 @app.post("/chat")
 async def chat_endpoint(user_id: str = Form(...), message: str = Form(...), file: UploadFile = File(None)):
     try:
-        # Load history dari MongoDB
-        history = await get_history(user_id)
-        chat_session = model.start_chat(history=history[-10:]) # Pakai 10 chat terakhir
-
-        if file:
-            img_data = await file.read()
-            img = PIL.Image.open(io.BytesIO(img_data))
-            response = chat_session.send_message([message, img])
-        else:
-            response = chat_session.send_message(message)
+        contents = []
         
-        # Simpan ke database
-        await save_history(user_id, chat_session.history)
+        if file:
+            img_bytes = await file.read()
+            # Gunakan PIL untuk membaca gambar agar kompatibel dengan SDK baru
+            img = PIL.Image.open(io.BytesIO(img_bytes))
+            contents.append(img)
+            
+        contents.append(message)
+
+        # Memanggil model dengan cara SDK google-genai yang benar
+        response = client_ai.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=contents,
+            config={
+                "system_instruction": "Kamu AI K1, asisten ahli koding FiveM, web dev, dan fitness. Jawab dengan cerdas dan to the point."
+            }
+        )
         
         return {"reply": response.text}
     except Exception as e:
-        # Menampilkan pesan error detail agar kita tahu jika API Key bermasalah
-        return {"reply": f"Maaf, ada kendala teknis: {str(e)}"}
+        # Menampilkan error di layar chat jika terjadi kegagalan API
+        return {"reply": f"Maaf, AI K1 sedang kendala teknis: {str(e)}"}
